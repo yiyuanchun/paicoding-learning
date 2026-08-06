@@ -1,6 +1,6 @@
 spring:
   datasource: #单数据源
-    url: jdbc:mysql://localhost:3306/${database.name}?useUnicode=true&allowPublicKeyRetrieval=true&autoReconnect=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3307/${database.name}?useUnicode=true&allowPublicKeyRetrieval=true&autoReconnect=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai
     # fixme 注意：本地启动时，数据库用户名 + 密码，更新这里的配置
     username: root
     password: ${PAICODING_DB_PASSWORD:}
@@ -9,7 +9,7 @@ spring:
     datasource:
       master:
         # 数据库名，从配置 database.name 中获取
-        url: jdbc:mysql://localhost:3306/${database.name}?useUnicode=true&allowPublicKeyRetrieval=true&autoReconnect=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai
+        url: jdbc:mysql://localhost:3307/${database.name}?useUnicode=true&allowPublicKeyRetrieval=true&autoReconnect=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai
         username: root
         password:
        # type: com.alibaba.druid.pool.DruidDataSource
@@ -26,7 +26,7 @@ spring:
         validationQuery: select 1
       slave:
         # 数据库名，从配置 database.name 中获取
-        url: jdbc:mysql://localhost:3306/${database.name}?useUnicode=true&allowPublicKeyRetrieval=true&autoReconnect=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai
+        url: jdbc:mysql://localhost:3307/${database.name}?useUnicode=true&allowPublicKeyRetrieval=true&autoReconnect=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai
         username: root
         password:
   redis:

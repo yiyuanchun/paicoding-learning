@@ -61,7 +61,11 @@ public class ForumDataSourceInitializer {
         if (initEnable && !liquibaseEnable) {
             // fixme: 首次启动时, 对于不支持liquibase的数据库，如mariadb，采用主动初始化
             // fixme 这种方式不支持后续动态的数据表结构更新、数据变更
-            populator.addScripts(DbChangeSetLoader.loadDbChangeSetResources(liquibaseChangeLog).toArray(new ClassPathResource[]{}));
+            // ClassPathResource是Spring提供的资源访问类，转么用于读取类路径下的文件
+            // ResourceDatabasePopulator是Spring JDBC提供的数据库脚本执行器
+            // xml文件的结构解析，最终返回sql文件路径列表
+            populator.addScripts(
+                    DbChangeSetLoader.loadDbChangeSetResources(liquibaseChangeLog).toArray(new ClassPathResource[] {}));
             populator.setSeparator(";");
             log.info("非Liquibase管理数据库，请手动执行数据库表初始化!");
         }
@@ -82,12 +86,15 @@ public class ForumDataSourceInitializer {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
         if (!liquibaseEnable) {
             // 非liquibase做数据库版本管理的，根据用户来判断是否有初始化
-            List list = jdbcTemplate.queryForList("SELECT table_name FROM information_schema.TABLES where table_name = 'user_info' and table_schema = '" + database + "';");
+            List list = jdbcTemplate.queryForList(
+                    "SELECT table_name FROM information_schema.TABLES where table_name = 'user_info' and table_schema = '"
+                            + database + "';");
             return CollectionUtils.isEmpty(list);
         }
 
         // 对于liquibase做数据版本管控的场景，若使用的不是默认的pai_coding，则需要进行修订
-        List<Map<String, Object>> record = jdbcTemplate.queryForList("select * from DATABASECHANGELOG where ID='00000000000020' limit 1;");
+        List<Map<String, Object>> record = jdbcTemplate
+                .queryForList("select * from DATABASECHANGELOG where ID='00000000000020' limit 1;");
         if (CollectionUtils.isEmpty(record)) {
             // 首次启动，需要初始化库表，直接返回
             return true;
@@ -95,30 +102,35 @@ public class ForumDataSourceInitializer {
 
         // 非首次启动时，判断记录对应的md5是否准确
         if (Objects.equals(record.get(0).get("MD5SUM"), "8:a1a2d9943b746acf58476ae612c292fc")) {
-            // 这里主要是为了解决 <a href="https://github.com/itwanger/paicoding/issues/71">#71</a> 这个问题
-            jdbcTemplate.update("update DATABASECHANGELOG set MD5SUM='8:bb81b67a5219be64eff22e2929fed540' where ID='00000000000020'");
+            // 这里主要是为了解决 <a href="https://github.com/itwanger/paicoding/issues/71">#71</a>
+            // 这个问题
+            jdbcTemplate.update(
+                    "update DATABASECHANGELOG set MD5SUM='8:bb81b67a5219be64eff22e2929fed540' where ID='00000000000020'");
         }
         return false;
     }
-
 
     /**
      * 数据库不存在时，尝试创建数据库
      */
     private boolean autoInitDatabase() {
         // 查询失败，可能是数据库不存在，尝试创建数据库之后再次测试
-        String datasourceUrl = SpringUtil.getConfigOrElse("spring.datasource.url", "spring.dynamic.datasource.master.url");
+        String datasourceUrl = SpringUtil.getConfigOrElse("spring.datasource.url",
+                "spring.dynamic.datasource.master.url");
         DbServerConfig dbServerConfig = parseDbServerConfig(datasourceUrl);
         // 用户名
-        String uname = SpringUtil.getConfigOrElse("spring.datasource.username", "spring.dynamic.datasource.master.username");
+        String uname = SpringUtil.getConfigOrElse("spring.datasource.username",
+                "spring.dynamic.datasource.master.username");
         // 密码
-        String pwd = SpringUtil.getConfigOrElse("spring.datasource.password", "spring.dynamic.datasource.master.password");
+        String pwd = SpringUtil.getConfigOrElse("spring.datasource.password",
+                "spring.dynamic.datasource.master.password");
         String adminJdbcUrl = buildAdminJdbcUrl(dbServerConfig);
         // 创建连接
         try (Connection connection = DriverManager.getConnection(adminJdbcUrl, uname, pwd);
-             Statement statement = connection.createStatement()) {
+                Statement statement = connection.createStatement()) {
             // 查询数据库是否存在
-            ResultSet set = statement.executeQuery("select schema_name from information_schema.schemata where schema_name = '" + database + "'");
+            ResultSet set = statement.executeQuery(
+                    "select schema_name from information_schema.schemata where schema_name = '" + database + "'");
             if (!set.next()) {
                 // 不存在时，创建数据库
                 String createDb = "CREATE DATABASE IF NOT EXISTS " + database;
@@ -136,7 +148,8 @@ public class ForumDataSourceInitializer {
             return false;
         } catch (SQLException e2) {
             throw new IllegalStateException("无法连接 MySQL 服务，尝试自动初始化数据库失败。请检查 MySQL 是否已启动，以及配置项 " +
-                    "'spring.datasource.url'、'spring.datasource.username'、'spring.datasource.password' 是否正确。当前连接信息: host=" +
+                    "'spring.datasource.url'、'spring.datasource.username'、'spring.datasource.password' 是否正确。当前连接信息: host="
+                    +
                     dbServerConfig.host + ", port=" + dbServerConfig.port + ", database=" + database, e2);
         }
     }

@@ -111,11 +111,11 @@ public class UserSessionHelper {
     private JWTVerifier verifier;
 
     public UserSessionHelper(JwtProperties jwtProperties,
-                             RedisTemplate<String, String> redisTemplate,
-                             LoginRiskProperties loginRiskProperties,
-                             LoginAuditService loginAuditService,
-                             UserDao userDao,
-                             UserAiDao userAiDao) {
+            RedisTemplate<String, String> redisTemplate,
+            LoginRiskProperties loginRiskProperties,
+            LoginAuditService loginAuditService,
+            UserDao userDao,
+            UserAiDao userAiDao) {
         this.jwtProperties = jwtProperties;
         this.redisTemplate = redisTemplate;
         this.loginRiskProperties = loginRiskProperties;
@@ -149,14 +149,19 @@ public class UserSessionHelper {
         String riskTag = enforceDeviceLimit(userId, sessionMeta);
 
         // 2.使用jwt生成的token时，后端可以不存储这个session信息, 完全依赖jwt的信息
-        // 但是需要考虑到用户登出，需要主动失效这个token，而jwt本身无状态，所以再这里的redis做一个简单的token -> userId的缓存，用于双重判定
+        // 但是需要考虑到用户登出，需要主动失效这个token，而jwt本身无状态，所以再这里的redis做一个简单的token ->
+        // userId的缓存，用于双重判定
         long expireSeconds = jwtProperties.getExpire() / 1000;
+        // token -> userId
         RedisClient.setStrWithExpire(token, String.valueOf(userId), expireSeconds);
+        // SESSION_META_PREFIX + token -> sessionMeta
         RedisClient.setStrWithExpire(sessionMetaKey(token), JsonUtil.toStr(sessionMeta), expireSeconds);
 
         // 3.维护用户的 session 索引，用于快速踢人下线
         String userSessionKey = userSessionKey(userId);
+        // USER_SESSION_PREFIX + userId -> Set<token>
         redisTemplate.opsForSet().add(userSessionKey, token);
+        // 设置索引的过期时间，确保不会无限增长
         redisTemplate.expire(userSessionKey, Duration.ofSeconds(expireSeconds));
 
         String sessionHash = buildSessionHash(token);
@@ -209,7 +214,8 @@ public class UserSessionHelper {
             meta = new SessionDeviceMeta();
             meta.setUserId(Long.valueOf(userId));
         }
-        loginAuditService.recordSessionOffline(buildSessionHash(session), reason, meta, !Objects.equals(reason, USER_LOGOUT_REASON));
+        loginAuditService.recordSessionOffline(buildSessionHash(session), reason, meta,
+                !Objects.equals(reason, USER_LOGOUT_REASON));
     }
 
     public void logout(String session) {
@@ -374,14 +380,16 @@ public class UserSessionHelper {
 
             String existDeviceId = normalizeDeviceId(meta.getDeviceId(), meta.getUaHash(), session);
             deviceSessions.computeIfAbsent(existDeviceId, key -> new ArrayList<>()).add(session);
-            deviceLoginTime.merge(existDeviceId, Optional.ofNullable(meta.getLoginTime()).orElse(Long.MAX_VALUE), Math::min);
+            deviceLoginTime.merge(existDeviceId, Optional.ofNullable(meta.getLoginTime()).orElse(Long.MAX_VALUE),
+                    Math::min);
         }
 
         if (!staleSessions.isEmpty()) {
             redisTemplate.opsForSet().remove(userSessionKey(userId), staleSessions.toArray(new String[0]));
         }
 
-        String deviceId = normalizeDeviceId(pendingMeta.getDeviceId(), pendingMeta.getUaHash(), pendingMeta.getUserId() == null ? null : String.valueOf(pendingMeta.getUserId()));
+        String deviceId = normalizeDeviceId(pendingMeta.getDeviceId(), pendingMeta.getUaHash(),
+                pendingMeta.getUserId() == null ? null : String.valueOf(pendingMeta.getUserId()));
         if (deviceSessions.containsKey(deviceId)) {
             return "KNOWN_DEVICE";
         }
@@ -405,7 +413,8 @@ public class UserSessionHelper {
 
     private void refreshSessionMeta(String session, Long userId, String clientIp, String deviceId, String userAgent) {
         SessionDeviceMeta meta = Optional.ofNullable(getSessionMeta(session))
-                .orElseGet(() -> buildSessionMeta(userId, null, null, System.currentTimeMillis(), System.currentTimeMillis() + jwtProperties.getExpire()));
+                .orElseGet(() -> buildSessionMeta(userId, null, null, System.currentTimeMillis(),
+                        System.currentTimeMillis() + jwtProperties.getExpire()));
 
         meta.setUserId(userId);
         if (StringUtils.isNotBlank(deviceId)) {
@@ -435,7 +444,8 @@ public class UserSessionHelper {
         }
     }
 
-    private SessionDeviceMeta buildSessionMeta(Long userId, String loginName, Integer loginType, long loginTime, long expireTime) {
+    private SessionDeviceMeta buildSessionMeta(Long userId, String loginName, Integer loginType, long loginTime,
+            long expireTime) {
         SessionDeviceMeta meta = new SessionDeviceMeta();
         meta.setUserId(userId);
         meta.setLoginName(loginName);
@@ -569,7 +579,8 @@ public class UserSessionHelper {
         return null;
     }
 
-    private void assertUserLoginAllowed(Long userId, String loginName, Integer loginType, SessionDeviceMeta sessionMeta) {
+    private void assertUserLoginAllowed(Long userId, String loginName, Integer loginType,
+            SessionDeviceMeta sessionMeta) {
         UserDO user = userDao.getUserByUserId(userId);
         if (user == null) {
             throw ExceptionUtil.of(StatusEnum.USER_NOT_EXISTS, "userId=" + userId);
@@ -580,7 +591,8 @@ public class UserSessionHelper {
 
         String untilText = formatForbidUntil(user.getForbidUntil());
         String msg = untilText + (StringUtils.isBlank(user.getForbidReason()) ? "" : "，原因：" + user.getForbidReason());
-        loginAuditService.recordLoginFail(StringUtils.defaultIfBlank(loginName, user.getUserName()), loginType, "账号已禁用:" + msg, sessionMeta);
+        loginAuditService.recordLoginFail(StringUtils.defaultIfBlank(loginName, user.getUserName()), loginType,
+                "账号已禁用:" + msg, sessionMeta);
         throw ExceptionUtil.of(StatusEnum.USER_FORBID_LOGIN, msg);
     }
 
@@ -597,6 +609,7 @@ public class UserSessionHelper {
         if (forbidUntil == null) {
             return "禁用中";
         }
-        return "截止至 " + FORBID_TIME_FORMATTER.format(forbidUntil.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
+        return "截止至 " + FORBID_TIME_FORMATTER
+                .format(forbidUntil.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
     }
 }
