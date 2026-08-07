@@ -2,6 +2,7 @@ package com.github.paicoding.forum.web.hook.filter;
 
 import cn.hutool.core.date.StopWatch;
 import com.github.paicoding.forum.api.model.context.ReqInfoContext;
+import com.github.paicoding.forum.api.model.event.PageViewedEvent;
 import com.github.paicoding.forum.core.mdc.MdcUtil;
 import com.github.paicoding.forum.core.util.CrossUtil;
 import com.github.paicoding.forum.core.util.EnvUtil;
@@ -10,7 +11,6 @@ import com.github.paicoding.forum.core.util.Md5Util;
 import com.github.paicoding.forum.core.util.SessionUtil;
 import com.github.paicoding.forum.core.util.SpringUtil;
 import com.github.paicoding.forum.service.sitemap.service.SitemapService;
-import com.github.paicoding.forum.service.statistics.service.StatisticsSettingService;
 import com.github.paicoding.forum.service.user.service.LoginService;
 import com.github.paicoding.forum.web.global.GlobalInitService;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +18,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpMethod;
 
 import javax.servlet.Filter;
@@ -33,6 +34,7 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -79,7 +81,7 @@ public class ReqRecordFilter implements Filter {
     private GlobalInitService globalInitService;
 
     @Autowired
-    private StatisticsSettingService statisticsSettingService;
+    private ApplicationEventPublisher publisher;
 
     @Override
     public void init(FilterConfig filterConfig) {
@@ -225,7 +227,7 @@ public class ReqRecordFilter implements Filter {
         REQ_LOG.info("{}", msg);
 
         // 保存请求计数
-        recordRequestCountAsync(req.getClientIp());
+        publishPageViewedEvent(req);
     }
 
     private void recordVisitAsync(ReqInfoContext.ReqInfo reqInfo) {
@@ -238,14 +240,22 @@ public class ReqRecordFilter implements Filter {
         });
     }
 
-    private void recordRequestCountAsync(String clientIp) {
-        REQUEST_STAT_EXECUTOR.execute(() -> {
-            try {
-                statisticsSettingService.saveRequestCount(clientIp);
-            } catch (Throwable e) {
-                log.warn("record request count failed, ip={}", clientIp, e);
-            }
-        });
+    private void publishPageViewedEvent(ReqInfoContext.ReqInfo reqInfo) {
+        String visitorId = reqInfo.getUserId() != null
+                ? "u:" + reqInfo.getUserId()
+                : "d:" + reqInfo.getDeviceId();
+        try {
+            publisher.publishEvent(new PageViewedEvent(
+                    UUID.randomUUID().toString(),
+                    reqInfo.getPath(),
+                    reqInfo.getUserId(),
+                    visitorId,
+                    Instant.now()
+            ));
+        } catch (Throwable e) {
+            log.warn("publish page viewed event failed, visitorId={}, path={}",
+                    visitorId, reqInfo.getPath(), e);
+        }
     }
 
     private boolean shouldRecordVisit(HttpServletRequest request, ReqInfoContext.ReqInfo reqInfo) {
