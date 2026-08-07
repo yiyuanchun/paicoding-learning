@@ -1,11 +1,16 @@
 package com.github.paicoding.forum.service.article.service.impl;
 
+import com.github.paicoding.forum.api.model.context.ReqInfoContext;
+import com.github.paicoding.forum.api.model.enums.ArticleReadTypeEnum;
 import com.github.paicoding.forum.api.model.enums.CollectionStatEnum;
 import com.github.paicoding.forum.api.model.enums.CommentStatEnum;
 import com.github.paicoding.forum.api.model.enums.DocumentTypeEnum;
 import com.github.paicoding.forum.api.model.enums.HomeSelectEnum;
 import com.github.paicoding.forum.api.model.enums.OperateTypeEnum;
 import com.github.paicoding.forum.api.model.enums.PraiseStatEnum;
+import com.github.paicoding.forum.api.model.enums.PushStatusEnum;
+import com.github.paicoding.forum.api.model.enums.user.UserAIStatEnum;
+import com.github.paicoding.forum.api.model.event.ArticleViewedEvent;
 import com.github.paicoding.forum.api.model.exception.ExceptionUtil;
 import com.github.paicoding.forum.api.model.vo.PageListVo;
 import com.github.paicoding.forum.api.model.vo.PageParam;
@@ -17,6 +22,7 @@ import com.github.paicoding.forum.api.model.vo.article.dto.TagDTO;
 import com.github.paicoding.forum.api.model.vo.constants.StatusEnum;
 import com.github.paicoding.forum.api.model.vo.user.dto.BaseUserInfoDTO;
 import com.github.paicoding.forum.core.senstive.SensitiveService;
+import com.github.paicoding.forum.core.permission.UserRole;
 import com.github.paicoding.forum.core.util.ArticleUtil;
 import com.github.paicoding.forum.service.article.conveter.ArticleConverter;
 import com.github.paicoding.forum.service.article.repository.dao.ArticleDao;
@@ -24,6 +30,7 @@ import com.github.paicoding.forum.service.article.repository.dao.ArticleTagDao;
 import com.github.paicoding.forum.service.article.repository.entity.ArticleDO;
 import com.github.paicoding.forum.service.article.repository.entity.ArticleSearchDocumentDTO;
 import com.github.paicoding.forum.service.article.service.ArticleReadService;
+import com.github.paicoding.forum.service.article.service.ArticlePayService;
 import com.github.paicoding.forum.service.article.service.CategoryService;
 import com.github.paicoding.forum.service.article.service.search.ArticleSearchResult;
 import com.github.paicoding.forum.service.article.service.search.ArticleSearchService;
@@ -36,15 +43,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.util.CollectionUtils;
 
 import java.util.ArrayList;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.UUID;
 
 /**
  * 文章查询相关服务类
@@ -73,6 +83,13 @@ public class ArticleReadServiceImpl implements ArticleReadService {
 
     @Autowired
     private CountService countService;
+
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+
+    @Autowired
+    private ArticlePayService articlePayService;
 
     @Autowired
     private UserService userService;
@@ -140,7 +157,17 @@ public class ArticleReadServiceImpl implements ArticleReadService {
         ArticleDTO article = queryDetailArticleInfo(articleId);
 
         // 文章阅读计数+1
-        countService.incrArticleReadCount(article.getAuthor(), articleId);
+        Long currentUserId = readUser;
+        if (hasArticleAccess(article, currentUserId)) {
+            eventPublisher.publishEvent(new ArticleViewedEvent(
+                    UUID.randomUUID().toString(),
+                    articleId,
+                    article.getAuthor(),
+                    currentUserId,
+                    currentVisitorId(),
+                    Instant.now()
+            ));
+        }
 
         // 文章的操作标记
         if (readUser != null) {
@@ -165,6 +192,54 @@ public class ArticleReadServiceImpl implements ArticleReadService {
         return sanitizeArticleForDisplay(article);
     }
 
+
+    private boolean hasArticleAccess(ArticleDTO article, Long currentUserId) {
+        boolean isAuthor = Objects.equals(article.getAuthor(), currentUserId);
+        if (!Objects.equals(article.getStatus(), PushStatusEnum.ONLINE.getCode())) {
+            return isAuthor || hasAdminPermission(currentUserId);
+        }
+
+        ArticleReadTypeEnum readType = ArticleReadTypeEnum.typeOf(article.getReadType());
+        if (readType == null || readType == ArticleReadTypeEnum.NORMAL || readType == ArticleReadTypeEnum.TIME_READ) {
+            return true;
+        }
+        if (isAuthor) {
+            return true;
+        }
+
+        switch (readType) {
+            case LOGIN:
+                return currentUserId != null;
+            case STAR_READ:
+                BaseUserInfoDTO currentUser = currentUserInfo(currentUserId);
+                return currentUser != null && currentUser.getStarStatus() == UserAIStatEnum.FORMAL;
+            case PAY_READ:
+                return currentUserId != null && articlePayService.hasPayed(article.getArticleId(), currentUserId);
+            default:
+                return false;
+        }
+    }
+
+    private boolean hasAdminPermission(Long currentUserId) {
+        BaseUserInfoDTO currentUser = currentUserInfo(currentUserId);
+        return currentUser != null && UserRole.hasAdminPermission(currentUser.getRole());
+    }
+
+    private BaseUserInfoDTO currentUserInfo(Long currentUserId) {
+        if (currentUserId == null) {
+            return null;
+        }
+        ReqInfoContext.ReqInfo reqInfo = ReqInfoContext.getReqInfo();
+        if (reqInfo != null && Objects.equals(reqInfo.getUserId(), currentUserId) && reqInfo.getUser() != null) {
+            return reqInfo.getUser();
+        }
+        return userService.queryBasicUserInfo(currentUserId);
+    }
+
+    private String currentVisitorId() {
+        ReqInfoContext.ReqInfo reqInfo = ReqInfoContext.getReqInfo();
+        return reqInfo == null ? null : reqInfo.getDeviceId();
+    }
 
     /**
      * 查询文章列表
