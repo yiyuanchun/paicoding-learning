@@ -53,6 +53,7 @@ public class NotifyMsgDao extends ServiceImpl<NotifyMsgMapper, NotifyMsgDO> {
      */
     public int countByUserIdAndStat(long userId, Integer stat) {
         return lambdaQuery()
+                .eq(NotifyMsgDO::getVisible, 1)
                 .eq(NotifyMsgDO::getNotifyUserId, userId)
                 .eq(stat != null, NotifyMsgDO::getState, stat)
                 .count().intValue();
@@ -68,6 +69,7 @@ public class NotifyMsgDao extends ServiceImpl<NotifyMsgMapper, NotifyMsgDO> {
         QueryWrapper<NotifyMsgDO> wrapper = new QueryWrapper<>();
         wrapper.select("type, count(*) as cnt");
         wrapper.eq("notify_user_id", userId);
+        wrapper.eq("visible", 1);
         if (stat != null) {
             wrapper.eq("state", stat);
         }

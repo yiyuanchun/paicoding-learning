@@ -97,7 +97,6 @@
         <dependency>
             <groupId>com.rabbitmq</groupId>
             <artifactId>amqp-client</artifactId>
-            <version>5.5.1</version>
         </dependency>
 
         <!--  将 Markdown 转换为 HTML  -->

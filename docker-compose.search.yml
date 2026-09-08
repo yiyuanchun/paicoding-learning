@@ -1,0 +1,38 @@
+# Local search services for the existing project MySQL on port 3307.
+services:
+  elasticsearch:
+    image: elasticsearch:8.10.4
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms384m -Xmx384m"
+    ports: ["127.0.0.1:9201:9200"]
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+  canal:
+    image: canal/canal-server:v1.1.7
+    ports: ["127.0.0.1:11111:11111"]
+    environment:
+      canal.destinations: paicoding
+      canal.instance.master.address: ${PAICODING_CANAL_MYSQL_ADDRESS:-host.docker.internal:3307}
+      canal.instance.dbUsername: ${PAICODING_CANAL_DB_USERNAME:?Set the dedicated Canal database account}
+      canal.instance.dbPassword: ${PAICODING_CANAL_DB_PASSWORD:?Set the Canal database password}
+      canal.instance.connectionCharset: UTF-8
+      canal.instance.filter.regex: '${PAICODING_CANAL_DATABASE:-pai_coding}\.(article|article_detail|user_info|column_article|search_cdc_signal)'
+      canal.instance.filter.transaction.entry: "false"
+      canal.instance.filter.query.ddl: "true"
+      canal.instance.global.spring.xml: classpath:spring/file-instance.xml
+      canal.file.data.dir: /home/admin/canal-server/data
+      canal.instance.tsdb.dir: /home/admin/canal-server/data/tsdb
+      canal.instance.memory.buffer.size: "16384"
+      canal.instance.memory.batch.mode: ITEMSIZE
+    volumes:
+      - canal-data:/home/admin/canal-server/data
+volumes:
+  es-data:
+  canal-data:

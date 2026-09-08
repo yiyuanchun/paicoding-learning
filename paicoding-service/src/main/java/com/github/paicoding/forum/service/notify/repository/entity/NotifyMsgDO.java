@@ -62,6 +62,11 @@ public class NotifyMsgDO extends BaseDO {
      */
     private Integer state;
 
+    private String notificationKey;
+    private Long lastEventVersion;
+    private String lastEventKey;
+    private Integer visible;
+
     /**
      * 设置消息内容，自动截断超长内容
      *

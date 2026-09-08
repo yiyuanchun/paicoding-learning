@@ -1,0 +1,21 @@
+# Enable together with elasticsearch.open. Disabled unless explicitly configured.
+search:
+  canal:
+    enabled: ${PAICODING_CANAL_ENABLED:false}
+    host: ${PAICODING_CANAL_HOST:127.0.0.1}
+    port: ${PAICODING_CANAL_PORT:11111}
+    destination: ${PAICODING_CANAL_DESTINATION:paicoding}
+    username: ${PAICODING_CANAL_USERNAME:}
+    password: ${PAICODING_CANAL_PASSWORD:}
+    database: ${database.name}
+    source-id: ${PAICODING_CANAL_SOURCE_ID:paicoding-mysql-1}
+    # Change after restoring/resetting source binlogs, never on ordinary restart.
+    source-epoch: ${PAICODING_CANAL_SOURCE_EPOCH:1}
+    batch-size: 200
+    retry-max-seconds: 300
+    reconcile-interval-seconds: 86400
+elasticsearch:
+  article-index: ${PAICODING_ES_ARTICLE_INDEX:paicoding_article_v2}
+  # Built-in cjk works without plugins. Set ik_max_word / ik_smart if IK is installed.
+  article-analyzer: ${PAICODING_ES_ANALYZER:cjk}
+  article-search-analyzer: ${PAICODING_ES_SEARCH_ANALYZER:cjk}

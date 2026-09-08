@@ -251,4 +251,10 @@
     <changeSet id="20260709_1" author="Claude">
         <sqlFile dbms="mysql" endDelimiter=";" encoding="UTF-8" path="liquibase/data/update_schema_260709.sql"/>
     </changeSet>
+    <changeSet id="20260907_interaction_mq" author="Codex">
+        <sqlFile dbms="mysql" endDelimiter=";" encoding="UTF-8" path="liquibase/data/update_schema_260907_mq.sql"/>
+    </changeSet>
+    <changeSet id="20260908_search_canal" author="Codex">
+        <sqlFile dbms="mysql" endDelimiter=";" encoding="UTF-8" path="liquibase/data/update_schema_260908_search.sql"/>
+    </changeSet>
 </databaseChangeLog>

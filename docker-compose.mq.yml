@@ -1,0 +1,21 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4-management
+    hostname: paicoding-rabbitmq
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${PAICODING_MQ_USERNAME:-paicoding}
+      RABBITMQ_DEFAULT_PASS: ${PAICODING_MQ_PASSWORD:?Set PAICODING_MQ_PASSWORD first}
+      RABBITMQ_DEFAULT_VHOST: ${PAICODING_MQ_VHOST:-/}
+    volumes:
+      - paicoding-rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    restart: unless-stopped
+volumes:
+  paicoding-rabbitmq-data:

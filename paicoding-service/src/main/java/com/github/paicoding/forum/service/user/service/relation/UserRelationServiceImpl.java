@@ -2,19 +2,19 @@ package com.github.paicoding.forum.service.user.service.relation;
 
 import com.github.paicoding.forum.api.model.context.ReqInfoContext;
 import com.github.paicoding.forum.api.model.enums.FollowStateEnum;
-import com.github.paicoding.forum.api.model.enums.NotifyTypeEnum;
 import com.github.paicoding.forum.api.model.vo.PageListVo;
 import com.github.paicoding.forum.api.model.vo.PageParam;
-import com.github.paicoding.forum.api.model.vo.notify.NotifyMsgEvent;
 import com.github.paicoding.forum.api.model.vo.user.UserRelationReq;
 import com.github.paicoding.forum.api.model.vo.user.dto.FollowUserInfoDTO;
 import com.github.paicoding.forum.core.util.MapUtils;
-import com.github.paicoding.forum.core.util.SpringUtil;
 import com.github.paicoding.forum.service.user.converter.UserConverter;
 import com.github.paicoding.forum.service.user.repository.dao.UserRelationDao;
 import com.github.paicoding.forum.service.user.repository.entity.UserRelationDO;
 import com.github.paicoding.forum.service.user.service.UserRelationService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.github.paicoding.forum.service.notify.mq.InteractionOutbox;
+import com.github.paicoding.forum.service.notify.mq.InteractionMessages;
 import org.springframework.util.CollectionUtils;
 
 import javax.annotation.Resource;
@@ -31,6 +31,8 @@ import java.util.stream.Collectors;
 public class UserRelationServiceImpl implements UserRelationService {
     @Resource
     private UserRelationDao userRelationDao;
+    @Resource
+    private InteractionOutbox interactionOutbox;
 
 
     /**
@@ -104,21 +106,27 @@ public class UserRelationServiceImpl implements UserRelationService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void saveUserRelation(UserRelationReq req) {
+        Long actor = ReqInfoContext.getReqInfo().getUserId();
+        boolean active = Boolean.TRUE.equals(req.getFollowed());
+        interactionOutbox.lock("follow:user:" + req.getUserId() + ":actor:" + actor);
         // 查询是否存在
         UserRelationDO userRelationDO = userRelationDao.getUserRelationRecord(req.getUserId(), ReqInfoContext.getReqInfo().getUserId());
+        boolean before = userRelationDO != null && Objects.equals(userRelationDO.getFollowState(), FollowStateEnum.FOLLOW.getCode());
+        if (active == before) {
+            return;
+        }
         if (userRelationDO == null) {
             userRelationDO = UserConverter.toDO(req);
             userRelationDao.save(userRelationDO);
-            // 发布关注事件
-            SpringUtil.publishEvent(new NotifyMsgEvent<>(this, NotifyTypeEnum.FOLLOW, userRelationDO));
+            interactionOutbox.append(InteractionMessages.follow(actor, req.getUserId(), before, active));
             return;
         }
 
         // 将是否关注状态重置
         userRelationDO.setFollowState(req.getFollowed() ? FollowStateEnum.FOLLOW.getCode() : FollowStateEnum.CANCEL_FOLLOW.getCode());
         userRelationDao.updateById(userRelationDO);
-        // 发布关注、取消关注事件
-        SpringUtil.publishEvent(new NotifyMsgEvent<>(this, req.getFollowed() ? NotifyTypeEnum.FOLLOW : NotifyTypeEnum.CANCEL_FOLLOW, userRelationDO));
+        interactionOutbox.append(InteractionMessages.follow(actor, req.getUserId(), before, active));
     }
 }

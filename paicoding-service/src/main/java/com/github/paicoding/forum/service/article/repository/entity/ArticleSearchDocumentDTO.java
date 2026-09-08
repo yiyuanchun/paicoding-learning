@@ -32,6 +32,7 @@ public class ArticleSearchDocumentDTO {
     private String content;
 
     private Integer status;
+    private Integer readType;
 
     private Integer officalStat;
 

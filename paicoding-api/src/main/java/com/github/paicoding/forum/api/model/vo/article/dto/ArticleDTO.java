@@ -62,6 +62,9 @@ public class ArticleDTO implements Serializable {
      * 全文搜索命中的摘要片段
      */
     private String searchHit;
+    /** HTML escaped fragments with only server-generated mark tags. */
+    private String titleHighlight;
+    private String contentHighlight;
 
     /**
      * 全文搜索命中的结构化片段

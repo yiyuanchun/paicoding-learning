@@ -4,20 +4,18 @@ import com.github.paicoding.forum.api.model.enums.DocumentTypeEnum;
 import com.github.paicoding.forum.api.model.enums.NotifyTypeEnum;
 import com.github.paicoding.forum.api.model.enums.OperateTypeEnum;
 import com.github.paicoding.forum.api.model.vo.PageParam;
-import com.github.paicoding.forum.api.model.vo.ResVo;
 import com.github.paicoding.forum.api.model.vo.user.dto.SimpleUserInfoDTO;
 import com.github.paicoding.forum.api.model.vo.user.dto.UserFootStatisticDTO;
-import com.github.paicoding.forum.core.common.CommonConstants;
-import com.github.paicoding.forum.core.util.JsonUtil;
 import com.github.paicoding.forum.service.article.service.ArticleReadService;
 import com.github.paicoding.forum.service.comment.repository.entity.CommentDO;
 import com.github.paicoding.forum.service.comment.service.CommentReadService;
-import com.github.paicoding.forum.service.notify.help.MsgNotifyHelper;
-import com.github.paicoding.forum.service.notify.service.RabbitmqService;
+import com.github.paicoding.forum.service.notify.mq.InteractionOutbox;
+import com.github.paicoding.forum.service.notify.mq.InteractionMessages;
+import com.github.paicoding.forum.api.model.vo.notify.InteractionMessage;
+import org.springframework.transaction.annotation.Transactional;
 import com.github.paicoding.forum.service.user.repository.dao.UserFootDao;
 import com.github.paicoding.forum.service.user.repository.entity.UserFootDO;
 import com.github.paicoding.forum.service.user.service.UserFootService;
-import com.rabbitmq.client.BuiltinExchangeType;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -44,7 +42,7 @@ public class UserFootServiceImpl implements UserFootService {
     private CommentReadService commentReadService;
 
     @Autowired
-    private RabbitmqService rabbitmqService;
+    private InteractionOutbox interactionOutbox;
 
     public UserFootServiceImpl(UserFootDao userFootDao) {
         this.userFootDao = userFootDao;
@@ -60,9 +58,11 @@ public class UserFootServiceImpl implements UserFootService {
      * @param operateTypeEnum 操作类型：点赞，评论，收藏等
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public UserFootDO saveOrUpdateUserFoot(DocumentTypeEnum documentType, Long documentId, Long authorId, Long userId, OperateTypeEnum operateTypeEnum) {
+        interactionOutbox.lock("foot:" + documentType.getCode() + ":" + documentId + ":" + userId);
         // 查询是否有该足迹；有则更新，没有则插入
-        UserFootDO readUserFootDO = userFootDao.getByDocumentAndUserId(documentId, documentType.getCode(), userId);
+        UserFootDO readUserFootDO = userFootDao.getForUpdate(documentId, documentType.getCode(), userId);
         if (readUserFootDO == null) {
             readUserFootDO = new UserFootDO();
             readUserFootDO.setUserId(userId);
@@ -88,14 +88,27 @@ public class UserFootServiceImpl implements UserFootService {
      * @param operateTypeEnum 操作类型：点赞，评论，收藏等
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void favorArticleComment(DocumentTypeEnum documentType, Long documentId, Long authorId, Long userId, OperateTypeEnum operateTypeEnum) {
-        // fixme 这里没有做并发控制，在大并发场景下，可能出现查询出来的数据，与db中数据不一致的场景
-        // fixme 解决方案：自旋等待的分布式锁 or 事务 + 悲观锁
-        // fixme 考虑到这个足迹的准确性影响并不大，留待有缘人进行修正
+        NotifyTypeEnum notifyType = OperateTypeEnum.getNotifyType(operateTypeEnum);
+        if (notifyType == null) {
+            throw new IllegalArgumentException("Unsupported interaction");
+        }
+        boolean praise = notifyType == NotifyTypeEnum.PRAISE || notifyType == NotifyTypeEnum.CANCEL_PRAISE;
+        if (!praise && documentType != DocumentTypeEnum.ARTICLE) {
+            throw new IllegalArgumentException("Only articles can be collected");
+        }
+        interactionOutbox.lock("foot:" + documentType.getCode() + ":" + documentId + ":" + userId);
 
         // 查询是否有该足迹；有则更新，没有则插入
-        UserFootDO readUserFootDO = userFootDao.getByDocumentAndUserId(documentId, documentType.getCode(), userId);
+        UserFootDO readUserFootDO = userFootDao.getForUpdate(documentId, documentType.getCode(), userId);
         boolean dbChanged = false;
+        boolean before = readUserFootDO != null && Objects.equals(1,
+                praise ? readUserFootDO.getPraiseStat() : readUserFootDO.getCollectionStat());
+        boolean active = notifyType == NotifyTypeEnum.PRAISE || notifyType == NotifyTypeEnum.COLLECT;
+        if (before == active) {
+            return;
+        }
         if (readUserFootDO == null) {
             readUserFootDO = new UserFootDO();
             readUserFootDO.setUserId(userId);
@@ -117,23 +130,11 @@ public class UserFootServiceImpl implements UserFootService {
         }
 
 
-        // 点赞、收藏两种操作时，需要发送异步消息，用于生成消息通知、更新文章/评论的相关计数统计、更新用户的活跃积分
-        NotifyTypeEnum notifyType = OperateTypeEnum.getNotifyType(operateTypeEnum);
-        if (notifyType == null) {
-            // 不需要发送通知的场景，直接返回
-            return;
-        }
-
-        // 点赞消息走 RabbitMQ，其它走 Java 内置消息机制
-        if (notifyType.equals(NotifyTypeEnum.PRAISE) && rabbitmqService.enabled()) {
-            rabbitmqService.publishMsg(
-                    CommonConstants.EXCHANGE_NAME_DIRECT,
-                    BuiltinExchangeType.DIRECT,
-                    CommonConstants.QUERE_KEY_PRAISE,
-                    JsonUtil.toStr(readUserFootDO));
-        } else {
-            MsgNotifyHelper.publish(notifyType, readUserFootDO);
-        }
+        Long articleId = documentType == DocumentTypeEnum.ARTICLE ? documentId
+                : commentReadService.queryComment(documentId).getArticleId();
+        interactionOutbox.append(InteractionMessages.foot(readUserFootDO,
+                praise ? InteractionMessage.Kind.PRAISE : InteractionMessage.Kind.COLLECT,
+                articleId, before, active));
     }
 
     @Override

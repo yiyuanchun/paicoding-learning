@@ -12,11 +12,13 @@ import org.springframework.context.annotation.Configuration;
 @ComponentScan("com.github.paicoding.forum.service")
 @MapperScan(basePackages = {
         "com.github.paicoding.forum.service.article.repository.mapper",
+        "com.github.paicoding.forum.service.article.service.search.sync.mapper",
         "com.github.paicoding.forum.service.user.repository.mapper",
         "com.github.paicoding.forum.service.comment.repository.mapper",
         "com.github.paicoding.forum.service.config.repository.mapper",
         "com.github.paicoding.forum.service.statistics.repository.mapper",
         "com.github.paicoding.forum.service.notify.repository.mapper",
+        "com.github.paicoding.forum.service.notify.mq",
         "com.github.paicoding.forum.service.shortlink.repository.mapper",
         "com.github.paicoding.forum.service.image.repository.mapper",
 })

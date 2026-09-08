@@ -247,6 +247,22 @@
 
     </dependencies>
 
+    <profiles>
+        <profile>
+            <id>windows-local-run</id>
+            <activation>
+                <os>
+                    <family>Windows</family>
+                </os>
+            </activation>
+            <properties>
+                <!-- Avoid Windows CreateProcess error=206 from the forked JVM's long classpath.
+                     In-process execution disables DevTools restart and fork-only JVM options. -->
+                <spring-boot.run.fork>false</spring-boot.run.fork>
+            </properties>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>

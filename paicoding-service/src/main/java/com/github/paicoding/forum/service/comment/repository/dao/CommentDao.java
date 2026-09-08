@@ -66,7 +66,6 @@ public class CommentDao extends ServiceImpl<CommentMapper, CommentDO> {
                 .eq(CommentDO::getDeleted, YesOrNoEnum.NO.getCode()).list();
     }
 
-
     /**
      * 查询有效评论数
      *
@@ -120,7 +119,7 @@ public class CommentDao extends ServiceImpl<CommentMapper, CommentDO> {
     /**
      * 批量统计子评论数量
      *
-     * @param articleId 文章ID
+     * @param articleId     文章ID
      * @param topCommentIds 一级评论ID集合
      * @return Map<topCommentId, count>
      */
@@ -134,8 +133,7 @@ public class CommentDao extends ServiceImpl<CommentMapper, CommentDO> {
         }
         return rows.stream().collect(Collectors.toMap(
                 row -> ((Number) row.get("key")).longValue(),
-                row -> ((Number) row.get("value")).intValue()
-        ));
+                row -> ((Number) row.get("value")).intValue()));
     }
 
     public List<CommentDO> listFirstSubComments(Long articleId, Collection<Long> topCommentIds) {
@@ -149,7 +147,7 @@ public class CommentDao extends ServiceImpl<CommentMapper, CommentDO> {
      * 分页查询子评论
      *
      * @param topCommentId 一级评论ID
-     * @param pageParam 分页参数
+     * @param pageParam    分页参数
      * @return 子评论列表
      */
     public List<CommentDO> listSubComments(Long topCommentId, PageParam pageParam) {

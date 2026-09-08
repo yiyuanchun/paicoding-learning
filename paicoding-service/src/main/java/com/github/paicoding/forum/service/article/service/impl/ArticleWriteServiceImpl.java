@@ -151,8 +151,9 @@ public class ArticleWriteServiceImpl implements ArticleWriteService {
         try {
             return slugGeneratorService.generateSlugWithAI(title);
         } catch (Exception e) {
-            log.warn("AI生成文章slug失败: title={}", title, e);
-            throw ExceptionUtil.of(StatusEnum.UNEXPECT_ERROR, "AI生成文章slug失败: " + e.getMessage());
+            // A URL suggestion is optional; missing credentials or an AI outage must not block saving.
+            log.warn("AI生成文章slug失败，使用本地规则: title={}, reason={}", title, e.getMessage());
+            return UrlSlugUtil.generateSlug(title);
         }
     }
 

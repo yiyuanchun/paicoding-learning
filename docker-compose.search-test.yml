@@ -1,0 +1,53 @@
+# Isolated disposable integration environment; no application data is mounted.
+services:
+  mysql:
+    image: mysql:8.0
+    command: ["--server-id=1908", "--log-bin=mysql-bin", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-expire-logs-seconds=604800"]
+    ports: ["127.0.0.1:3309:3306"]
+    environment:
+      MYSQL_ROOT_PASSWORD: search-test-only
+      MYSQL_DATABASE: search_it
+    volumes:
+      - ./scripts/search-test-init.sql:/docker-entrypoint-initdb.d/01-search.sql:ro
+      - ./paicoding-web/src/main/resources/liquibase/data/update_schema_260908_search.sql:/docker-entrypoint-initdb.d/02-sync.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-psearch-test-only"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+  elasticsearch:
+    image: elasticsearch:8.10.4
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms384m -Xmx384m"
+    ports: ["127.0.0.1:9202:9200"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+  canal:
+    image: canal/canal-server:v1.1.7
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports: ["127.0.0.1:11112:11111"]
+    environment:
+      canal.destinations: example
+      canal.instance.master.address: mysql:3306
+      canal.instance.dbUsername: canal
+      canal.instance.dbPassword: search-test-only
+      canal.instance.connectionCharset: UTF-8
+      canal.instance.filter.regex: 'search_it\..*'
+      canal.instance.filter.transaction.entry: "false"
+      canal.instance.filter.query.ddl: "true"
+      canal.instance.global.spring.xml: classpath:spring/file-instance.xml
+      canal.file.data.dir: /home/admin/canal-server/data
+      canal.instance.tsdb.dir: /home/admin/canal-server/data/tsdb
+      canal.instance.memory.buffer.size: "16384"
+      canal.instance.memory.batch.mode: ITEMSIZE
+    volumes:
+      - canal-data:/home/admin/canal-server/data
+volumes:
+  canal-data:

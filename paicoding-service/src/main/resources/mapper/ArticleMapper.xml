@@ -139,6 +139,7 @@
                a.url_slug,
                a.summary,
                ad.content,
+               a.read_type,
                a.status,
                a.offical_stat,
                a.topping_stat,

@@ -1,13 +1,13 @@
 package com.github.paicoding.forum.service.comment.service.impl;
 
-import com.github.paicoding.forum.api.model.enums.NotifyTypeEnum;
 import com.github.paicoding.forum.api.model.enums.YesOrNoEnum;
 import com.github.paicoding.forum.api.model.enums.ai.AiBotEnum;
 import com.github.paicoding.forum.api.model.exception.ExceptionUtil;
 import com.github.paicoding.forum.api.model.vo.comment.CommentSaveReq;
 import com.github.paicoding.forum.api.model.vo.comment.dto.HighlightDto;
 import com.github.paicoding.forum.api.model.vo.constants.StatusEnum;
-import com.github.paicoding.forum.api.model.vo.notify.NotifyMsgEvent;
+import com.github.paicoding.forum.service.notify.mq.InteractionOutbox;
+import com.github.paicoding.forum.service.notify.mq.InteractionMessages;
 import com.github.paicoding.forum.core.senstive.SensitiveService;
 import com.github.paicoding.forum.core.util.JsonUtil;
 import com.github.paicoding.forum.core.util.NumUtil;
@@ -52,6 +52,8 @@ public class CommentWriteServiceImpl implements CommentWriteService {
     private AiBots aiBots;
     @Autowired
     private SensitiveService sensitiveService;
+    @Autowired
+    private InteractionOutbox interactionOutbox;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -91,19 +93,16 @@ public class CommentWriteServiceImpl implements CommentWriteService {
             this.aiBotTrigger(commentDO, parentComment);
         }
 
-        // 4. 发布添加/回复评论事件
-        SpringUtil.publishEvent(new NotifyMsgEvent<>(this, NotifyTypeEnum.COMMENT, commentDO));
-        if (NumUtil.upZero(parentUser)) {
-            // 评论回复事件
-            SpringUtil.publishEvent(new NotifyMsgEvent<>(this, NotifyTypeEnum.REPLY, commentDO));
-        }
+        // One business fact; the MQ consumer creates article/reply notifications separately.
+        interactionOutbox.append(InteractionMessages.comment(commentDO, article.getUserId(), parentUser, true));
         return commentDO;
     }
 
     private CommentDO updateComment(CommentSaveReq commentSaveReq) {
+        interactionOutbox.lock("comment:comment:" + commentSaveReq.getCommentId());
         // 更新评论
         CommentDO commentDO = commentDao.getById(commentSaveReq.getCommentId());
-        if (commentDO == null) {
+        if (commentDO == null || Objects.equals(commentDO.getDeleted(), YesOrNoEnum.YES.getCode())) {
             throw ExceptionUtil.of(StatusEnum.COMMENT_NOT_EXISTS, commentSaveReq.getCommentId());
         }
         commentDO.setContent(commentSaveReq.getCommentContent());
@@ -115,6 +114,7 @@ public class CommentWriteServiceImpl implements CommentWriteService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteComment(Long commentId, Long userId) {
+        interactionOutbox.lock("comment:comment:" + commentId);
         CommentDO commentDO = commentDao.getById(commentId);
         // 1.校验评论，是否越权，文章是否存在
         if (commentDO == null) {
@@ -122,6 +122,9 @@ public class CommentWriteServiceImpl implements CommentWriteService {
         }
         if (!Objects.equals(commentDO.getUserId(), userId)) {
             throw ExceptionUtil.of(StatusEnum.FORBID_ERROR_MIXED, "无权删除评论");
+        }
+        if (Objects.equals(commentDO.getDeleted(), YesOrNoEnum.YES.getCode())) {
+            return;
         }
         // 获取文章信息
         ArticleDO article = articleReadService.queryBasicArticle(commentDO.getArticleId());
@@ -135,12 +138,8 @@ public class CommentWriteServiceImpl implements CommentWriteService {
         CommentDO parentComment = getParentCommentUser(commentDO.getParentCommentId());
         userFootWriteService.removeCommentFoot(commentDO, article.getUserId(), parentComment == null ? null : parentComment.getUserId());
 
-        // 3. 发布删除评论事件
-        SpringUtil.publishEvent(new NotifyMsgEvent<>(this, NotifyTypeEnum.DELETE_COMMENT, commentDO));
-        if (NumUtil.upZero(commentDO.getParentCommentId())) {
-            // 评论
-            SpringUtil.publishEvent(new NotifyMsgEvent<>(this, NotifyTypeEnum.DELETE_REPLY, commentDO));
-        }
+        interactionOutbox.append(InteractionMessages.comment(commentDO, article.getUserId(),
+                parentComment == null ? null : parentComment.getUserId(), false));
     }
 
 

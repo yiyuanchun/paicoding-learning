@@ -18,7 +18,7 @@ import javax.annotation.Resource;
  * @date 2023/6/9
  */
 @Configuration
-@ConditionalOnProperty(value = "rabbitmq.switchFlag")
+@ConditionalOnProperty(value = "rabbitmq.legacy-demo-enabled", havingValue = "true")
 @EnableConfigurationProperties(RabbitmqProperties.class)
 public class RabbitMqAutoConfig implements ApplicationRunner {
     @Resource

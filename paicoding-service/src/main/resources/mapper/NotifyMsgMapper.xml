@@ -24,7 +24,7 @@
         left join user_info as u on m.operate_user_id = u.user_id
         left join article as a on m.related_id = a.id
         where
-        m.notify_user_id = #{userId} and m.type = #{type}
+        m.notify_user_id = #{userId} and m.type = #{type} and m.visible = 1
         order by m.create_time desc
         <include refid="limit"/>
     </select>
@@ -41,7 +41,7 @@
         from notify_msg as m
         left join user_info as u on m.operate_user_id = u.user_id
         where
-        m.notify_user_id = #{userId} and m.type = #{type}
+        m.notify_user_id = #{userId} and m.type = #{type} and m.visible = 1
         order by m.create_time desc
         <include refid="limit"/>
     </select>

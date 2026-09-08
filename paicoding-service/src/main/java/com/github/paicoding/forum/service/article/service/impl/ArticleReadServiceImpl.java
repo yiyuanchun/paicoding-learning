@@ -301,7 +301,7 @@ public class ArticleReadServiceImpl implements ArticleReadService {
         }
         key = key.trim();
         ArticleSearchResult searchResult = articleSearchService.searchHintArticleIds(key, 10);
-        if (searchResult != null && !CollectionUtils.isEmpty(searchResult.getArticleIds())) {
+        if (searchResult != null) {
             return buildSimpleArticleList(searchResult.getArticleIds());
         }
 
@@ -310,7 +310,6 @@ public class ArticleReadServiceImpl implements ArticleReadService {
                 .map(s -> new SimpleArticleDTO().setId(s.getId()).setAuthorId(s.getUserId()).setTitle(s.getTitle()))
                 .map(this::sanitizeSimpleArticleForDisplay)
                 .collect(Collectors.toList());
-        articleSearchService.syncHintKeyword(key, 10);
         return result;
     }
 
@@ -318,8 +317,20 @@ public class ArticleReadServiceImpl implements ArticleReadService {
     public PageListVo<ArticleDTO> queryArticlesBySearchKey(String key, PageParam page) {
         if (StringUtils.isNotBlank(key)) {
             ArticleSearchResult searchResult = articleSearchService.searchOnlineArticleIds(key.trim(), page);
-            if (searchResult != null && !CollectionUtils.isEmpty(searchResult.getArticleIds())) {
-                return buildArticleListVo(searchResult.getArticleIds(), searchResult.getHighlights(), page.getPageSize());
+            if (searchResult != null) {
+                PageListVo<ArticleDTO> result = buildArticleListVo(searchResult.getArticleIds(), searchResult.getHighlights(), page.getPageSize());
+                for (ArticleDTO article : result.getList()) {
+                    article.setTitleHighlight(searchResult.getTitleHighlights().get(article.getArticleId()));
+                    // Recheck current visibility before exposing potentially stale body highlights.
+                    ArticleSearchDocumentDTO current = articleDao.queryArticleSearchDocument(article.getArticleId());
+                    if (current != null && Objects.equals(current.getReadType(), 0) && current.parseColumnIds().isEmpty()) {
+                        article.setContentHighlight(searchResult.getContentHighlights().get(article.getArticleId()));
+                    } else {
+                        article.setSearchHit(null);
+                    }
+                }
+                result.setHasMore(page.getOffset() + page.getPageSize() < searchResult.getTotal());
+                return result;
             }
         }
         PageListVo<ArticleDTO> result;
@@ -328,9 +339,6 @@ public class ArticleReadServiceImpl implements ArticleReadService {
         } else {
             List<ArticleDO> records = articleDao.listArticlesByBySearchKey(key, page);
             result = buildArticleListVo(records, page.getPageSize());
-        }
-        if (StringUtils.isNotBlank(key)) {
-            articleSearchService.syncOnlineKeyword(key.trim(), page);
         }
         return result;
     }
@@ -393,6 +401,7 @@ public class ArticleReadServiceImpl implements ArticleReadService {
         }
         List<ArticleDO> records = sortByIds(articleIds, articleDao.listByIds(articleIds));
         return records.stream()
+                .filter(s -> Objects.equals(s.getStatus(), 1) && Objects.equals(s.getDeleted(), 0))
                 .map(s -> new SimpleArticleDTO().setId(s.getId()).setAuthorId(s.getUserId()).setTitle(s.getTitle()))
                 .map(this::sanitizeSimpleArticleForDisplay)
                 .collect(Collectors.toList());
@@ -404,6 +413,7 @@ public class ArticleReadServiceImpl implements ArticleReadService {
         }
         List<ArticleDO> records = sortByIds(articleIds, articleDao.listByIds(articleIds));
         List<ArticleDTO> result = records.stream()
+                .filter(s -> Objects.equals(s.getStatus(), 1) && Objects.equals(s.getDeleted(), 0))
                 .map(this::fillArticleRelatedInfo)
                 .peek(article -> article.setSearchHit(highlights.get(article.getArticleId())))
                 .collect(Collectors.toList());

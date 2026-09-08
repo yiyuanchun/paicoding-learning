@@ -20,4 +20,6 @@ public class ArticleSearchResult {
     private Map<Long, List<ArticleSearchSnippetDTO>> snippets = Collections.emptyMap();
 
     private long total;
+    private Map<Long, String> titleHighlights = Collections.emptyMap();
+    private Map<Long, String> contentHighlights = Collections.emptyMap();
 }

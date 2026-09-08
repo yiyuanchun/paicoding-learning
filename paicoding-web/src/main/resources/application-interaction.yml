@@ -1,0 +1,27 @@
+# All five interaction notifications are delivered by RabbitMQ. No Spring-event fallback.
+spring:
+  rabbitmq:
+    host: ${PAICODING_MQ_HOST:127.0.0.1}
+    port: ${PAICODING_MQ_PORT:5672}
+    username: ${PAICODING_MQ_USERNAME:paicoding}
+    password: ${PAICODING_MQ_PASSWORD:}
+    virtual-host: ${PAICODING_MQ_VHOST:/}
+    connection-timeout: 3s
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: manual
+        missing-queues-fatal: false
+        retry:
+          enabled: false
+
+paicoding:
+  mq:
+    queue-type: ${PAICODING_MQ_QUEUE_TYPE:classic}
+    publisher-enabled: ${PAICODING_MQ_PUBLISHER_ENABLED:true}
+    consumer-enabled: ${PAICODING_MQ_CONSUMER_ENABLED:true}
+    publish-interval-ms: 2000
+    max-consume-retries: 3

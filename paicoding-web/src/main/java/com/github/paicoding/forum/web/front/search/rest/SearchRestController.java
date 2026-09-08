@@ -40,13 +40,13 @@ public class SearchRestController extends BaseViewController {
      * @param key
      */
     @GetMapping(path = "hint")
-    public ResVo<SearchArticleVo> recommend(@RequestParam(name = "key", required = false) String key) {List<SimpleArticleDTO> list = articleReadService.querySimpleArticleBySearchKey(key);
+    public ResVo<SearchArticleVo> recommend(@RequestParam(name = "key", required = false) String key) {
+        List<SimpleArticleDTO> list = articleReadService.querySimpleArticleBySearchKey(key);
         SearchArticleVo vo = new SearchArticleVo();
         vo.setKey(key);
         vo.setItems(list);
         return ResVo.ok(vo);
     }
-
 
     /**
      * 分类下的文章列表
@@ -56,8 +56,8 @@ public class SearchRestController extends BaseViewController {
      */
     @GetMapping(path = "list")
     public ResVo<NextPageHtmlVo> searchList(@RequestParam(name = "key", required = false) String key,
-                                            @RequestParam(name = "page") Long page,
-                                            @RequestParam(name = "size", required = false) Long size) {
+            @RequestParam(name = "page") Long page,
+            @RequestParam(name = "size", required = false) Long size) {
         PageParam pageParam = buildPageParam(page, size);
         PageListVo<ArticleDTO> list = articleReadService.queryArticlesBySearchKey(key, pageParam);
         String html = templateEngineHelper.renderToVo("views/article-search-list/article/list", "articles", list);

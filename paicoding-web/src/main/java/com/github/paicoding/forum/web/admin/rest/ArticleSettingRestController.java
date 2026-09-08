@@ -53,6 +53,16 @@ public class ArticleSettingRestController {
     @Autowired
     private AiSeoService aiSeoService;
 
+    @Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.github.paicoding.forum.service.article.service.search.sync.SearchSyncEngine> searchSync;
+
+    @Permission(role = UserRole.ADMIN)
+    @GetMapping(path = "search/status")
+    public ResVo<java.util.Map<String, Object>> searchSyncStatus() {
+        com.github.paicoding.forum.service.article.service.search.sync.SearchSyncEngine engine = searchSync.getIfAvailable();
+        return ResVo.ok(engine == null ? java.util.Collections.singletonMap("enabled", false) : engine.status());
+    }
+
     @Permission(role = UserRole.ADMIN)
     @PostMapping(path = "save")
     public ResVo<String> save(@RequestBody ArticlePostReq req) {

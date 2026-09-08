@@ -22,6 +22,13 @@ import java.util.Optional;
  */
 @Repository
 public class UserFootDao extends ServiceImpl<UserFootMapper, UserFootDO> {
+    /** Current read after the aggregate lock, independent of earlier transaction snapshots. */
+    public UserFootDO getForUpdate(Long documentId, Integer type, Long userId) {
+        return lambdaQuery().eq(UserFootDO::getDocumentId, documentId)
+                .eq(UserFootDO::getDocumentType, type).eq(UserFootDO::getUserId, userId)
+                .last("FOR UPDATE").one();
+    }
+
     public UserFootDO getByDocumentAndUserId(Long documentId, Integer type, Long userId) {
         LambdaQueryWrapper<UserFootDO> query = Wrappers.lambdaQuery();
         query.eq(UserFootDO::getDocumentId, documentId)
