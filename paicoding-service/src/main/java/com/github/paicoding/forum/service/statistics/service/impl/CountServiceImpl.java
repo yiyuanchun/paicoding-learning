@@ -9,6 +9,7 @@ import com.github.paicoding.forum.service.article.repository.dao.ArticleDao;
 import com.github.paicoding.forum.service.article.repository.mapper.ReadCountMapper;
 import com.github.paicoding.forum.service.comment.service.CommentReadService;
 import com.github.paicoding.forum.service.statistics.constants.CountConstants;
+import com.github.paicoding.forum.service.statistics.constants.StatisticsRedisKey;
 import com.github.paicoding.forum.service.statistics.service.CountService;
 import com.github.paicoding.forum.service.user.repository.dao.UserDao;
 import com.github.paicoding.forum.service.user.repository.dao.UserFootDao;
@@ -106,20 +107,21 @@ public class CountServiceImpl implements CountService {
         info.setPraiseCount(ans.getOrDefault(CountConstants.PRAISE_COUNT, 0));
         info.setCollectionCount(ans.getOrDefault(CountConstants.COLLECTION_COUNT, 0));
         info.setCommentCount(ans.getOrDefault(CountConstants.COMMENT_COUNT, 0));
-        info.setReadCount(ans.getOrDefault(CountConstants.READ_COUNT, 0));
+        info.setReadCount(loadArticleReadCount(articleId));
         return info;
     }
 
     @Override
     public void incrArticleReadCount(Long authorUserId, Long articleId) {
-        // 优化：只更新 Redis 计数器，不再直接写数据库
-        // 定时任务 syncArticleReadCountToDb 会将 Redis 计数同步到数据库
-        RedisClient.pipelineAction()
-                .add(CountConstants.ARTICLE_STATISTIC_INFO + articleId, CountConstants.READ_COUNT,
-                        (connection, key, value) -> connection.hIncrBy(key, value, 1))
-                .add(CountConstants.USER_STATISTIC_INFO + authorUserId, CountConstants.READ_COUNT,
-                        (connection, key, value) -> connection.hIncrBy(key, value, 1))
-                .execute();
+        // 文章浏览量只使用 String 保存实时总量。
+        String articleKey = StatisticsRedisKey.articleTotalView(articleId);
+        ensureArticleReadCountInitialized(articleId, articleKey);
+        stringRedisTemplate.opsForValue().increment(articleKey);
+
+        // 作者累计阅读量属于用户统计，不是文章浏览量本身，继续沿用用户统计 Hash。
+        if (authorUserId != null) {
+            RedisClient.hIncr(CountConstants.USER_STATISTIC_INFO + authorUserId, CountConstants.READ_COUNT, 1);
+        }
     }
 
     /**
@@ -145,24 +147,24 @@ public class CountServiceImpl implements CountService {
     }
 
     /**
-     * 每5分钟执行一次，将 Redis 中的文章阅读计数同步到数据库
+     * 每10分钟执行一次，将 Redis String 中的文章阅读总数同步到数据库
      */
-    @Scheduled(cron = "0 */5 * * * ?")
+    @Scheduled(cron = "0 */10 * * * ?")
     public void syncArticleReadCountToDb() {
         Long start = System.currentTimeMillis();
         log.info("开始同步文章阅读计数到数据库");
 
         try {
-            // 扫描所有文章统计 key
-            Set<String> keys = scanKeys(CountConstants.ARTICLE_STATISTIC_INFO + "*");
+            // 扫描文章浏览总量 String Key
+            Set<String> keys = scanKeys(StatisticsRedisKey.articleTotalViewPattern());
 
             int synced = 0;
             for (String key : keys) {
                 try {
-                    // 提取 articleId
-                    Long articleId = Long.parseLong(key.replace(CountConstants.ARTICLE_STATISTIC_INFO, ""));
+                    // 从 stats:article:view:total:{articleId} 中提取文章 ID
+                    Long articleId = StatisticsRedisKey.articleIdFromTotalViewKey(key);
 
-                    // 获取 Redis 中的阅读计数
+                    // 获取 Redis String 中的当前总浏览量
                     Integer readCount = getArticleReadCount(key);
                     if (readCount != null && readCount > 0) {
                         // 更新数据库
@@ -181,28 +183,56 @@ public class CountServiceImpl implements CountService {
     }
 
     /**
-     * 扫描匹配的 Redis key
+     * 扫描匹配的 Redis 原始 key。
+     * 文章浏览总量由 StringRedisTemplate 直接维护，因此不使用 RedisClient 的 pai_ 前缀。
      */
     @SuppressWarnings("unchecked")
     Set<String> scanKeys(String pattern) {
         Set<String> keys = new HashSet<>();
-        ScanOptions options = ScanOptions.scanOptions().match("pai_" + pattern).count(100).build();
+        ScanOptions options = ScanOptions.scanOptions().match(pattern).count(100).build();
 
         try (Cursor<String> cursor = stringRedisTemplate.scan(options)) {
             while (cursor.hasNext()) {
-                String key = cursor.next();
-                // 移除前缀 "pai_"
-                keys.add(key.substring(4));
+                keys.add(cursor.next());
             }
         }
         return keys;
     }
 
     /**
-     * 获取 Redis 中文章当前的阅读总数
+     * 获取 Redis String 中文章当前的阅读总数。
      */
     Integer getArticleReadCount(String key) {
-        return RedisClient.hGet(key, CountConstants.READ_COUNT, Integer.class);
+        String value = stringRedisTemplate.opsForValue().get(key);
+        return value == null ? null : Integer.valueOf(value);
+    }
+
+    /**
+     * 查询文章阅读总量：优先 Redis，未命中时使用 MySQL 作为历史基线并回填 Redis。
+     */
+    Integer loadArticleReadCount(Long articleId) {
+        String articleKey = StatisticsRedisKey.articleTotalView(articleId);
+        Integer redisCount = getArticleReadCount(articleKey);
+        if (redisCount != null) {
+            return redisCount;
+        }
+
+        Integer persistedCount = readCountMapper.queryCount(articleId, DocumentTypeEnum.ARTICLE.getCode());
+        int baseline = persistedCount == null ? 0 : persistedCount;
+        stringRedisTemplate.opsForValue().setIfAbsent(articleKey, String.valueOf(baseline));
+
+        Integer initializedCount = getArticleReadCount(articleKey);
+        return initializedCount == null ? baseline : initializedCount;
+    }
+
+    private void ensureArticleReadCountInitialized(Long articleId, String articleKey) {
+        if (getArticleReadCount(articleKey) != null) {
+            return;
+        }
+
+        Integer persistedCount = readCountMapper.queryCount(articleId, DocumentTypeEnum.ARTICLE.getCode());
+        stringRedisTemplate.opsForValue().setIfAbsent(
+                articleKey, String.valueOf(persistedCount == null ? 0 : persistedCount));
     }
 
     /**
@@ -256,7 +286,6 @@ public class CountServiceImpl implements CountService {
         RedisClient.hMSet(CountConstants.ARTICLE_STATISTIC_INFO + articleId,
                 MapUtils.create(CountConstants.COLLECTION_COUNT, res.getCollectionCount(),
                         CountConstants.PRAISE_COUNT, res.getPraiseCount(),
-                        CountConstants.READ_COUNT, res.getReadCount(),
                         CountConstants.COMMENT_COUNT, res.getCommentCount()
                 )
         );

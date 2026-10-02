@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.github.paicoding.forum.service.article.repository.entity.ReadCountDO;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 /**
  * 标签mapper接口
@@ -21,6 +22,10 @@ public interface ReadCountMapper extends BaseMapper<ReadCountDO> {
      * @param documentType 文档类型
      * @param cnt          当前总计数
      */
+    @Select("SELECT cnt FROM read_count WHERE document_id = #{documentId} AND document_type = #{documentType} LIMIT 1")
+    Integer queryCount(@Param("documentId") Long documentId,
+                       @Param("documentType") Integer documentType);
+
     @Insert("INSERT INTO read_count (document_id, document_type, cnt, create_time, update_time) " +
             "VALUES (#{documentId}, #{documentType}, #{cnt}, NOW(), NOW()) " +
             "ON DUPLICATE KEY UPDATE cnt = #{cnt}, update_time = NOW()")
