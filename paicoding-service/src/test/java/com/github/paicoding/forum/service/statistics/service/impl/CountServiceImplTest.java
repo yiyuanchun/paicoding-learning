@@ -1,13 +1,13 @@
 package com.github.paicoding.forum.service.statistics.service.impl;
 
 import com.github.paicoding.forum.api.model.enums.DocumentTypeEnum;
+import com.github.paicoding.forum.service.article.repository.dao.ArticleDao;
 import com.github.paicoding.forum.service.article.repository.mapper.ReadCountMapper;
 import com.github.paicoding.forum.service.comment.service.CommentReadService;
-import com.github.paicoding.forum.service.statistics.constants.CountConstants;
+import com.github.paicoding.forum.service.statistics.constants.StatisticsRedisKey;
 import com.github.paicoding.forum.service.user.repository.dao.UserDao;
 import com.github.paicoding.forum.service.user.repository.dao.UserFootDao;
 import com.github.paicoding.forum.service.user.repository.dao.UserRelationDao;
-import com.github.paicoding.forum.service.article.repository.dao.ArticleDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,6 +16,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Method;
@@ -49,6 +51,8 @@ class CountServiceImplTest {
     @Mock
     private RedisTemplate<String, String> stringRedisTemplate;
     @Mock
+    private ValueOperations<String, String> valueOperations;
+    @Mock
     private Cursor<String> cursor;
 
     private CountServiceImpl service;
@@ -65,35 +69,56 @@ class CountServiceImplTest {
     }
 
     @Test
-    void scanKeysShouldStripPaiPrefix() throws Exception {
+    void scanKeysShouldReturnRawArticleViewKeys() {
         when(stringRedisTemplate.scan(any(ScanOptions.class))).thenReturn(cursor);
         when(cursor.hasNext()).thenReturn(true, true, false);
-        when(cursor.next()).thenReturn("pai_article_statistic_101", "pai_article_statistic_102");
+        when(cursor.next()).thenReturn(
+                "stats:article:view:total:101",
+                "stats:article:view:total:102");
 
-        Set<String> keys = service.scanKeys(CountConstants.ARTICLE_STATISTIC_INFO + "*");
+        Set<String> keys = service.scanKeys(StatisticsRedisKey.articleTotalViewPattern());
 
-        assertThat(keys).containsExactlyInAnyOrder("article_statistic_101", "article_statistic_102");
+        assertThat(keys).containsExactlyInAnyOrder(
+                "stats:article:view:total:101",
+                "stats:article:view:total:102");
         verify(cursor).close();
     }
 
     @Test
     void syncArticleReadCountToDbShouldOnlyPersistPositiveCounts() {
         LinkedHashSet<String> keys = new LinkedHashSet<>();
-        keys.add("article_statistic_101");
-        keys.add("article_statistic_bad");
-        keys.add("article_statistic_102");
-        keys.add("article_statistic_103");
+        keys.add("stats:article:view:total:101");
+        keys.add("stats:article:view:total:bad");
+        keys.add("stats:article:view:total:102");
+        keys.add("stats:article:view:total:103");
 
-        doReturn(keys).when(service).scanKeys(CountConstants.ARTICLE_STATISTIC_INFO + "*");
-        doReturn(8).when(service).getArticleReadCount("article_statistic_101");
-        doReturn(0).when(service).getArticleReadCount("article_statistic_102");
-        doReturn(null).when(service).getArticleReadCount("article_statistic_103");
+        doReturn(keys).when(service).scanKeys(StatisticsRedisKey.articleTotalViewPattern());
+        doReturn(8).when(service).getArticleReadCount("stats:article:view:total:101");
+        doReturn(0).when(service).getArticleReadCount("stats:article:view:total:102");
+        doReturn(null).when(service).getArticleReadCount("stats:article:view:total:103");
 
         service.syncArticleReadCountToDb();
 
         verify(readCountMapper).insertOrUpdate(101L, DocumentTypeEnum.ARTICLE.getCode(), 8);
-        verify(service, never()).getArticleReadCount("article_statistic_bad");
+        verify(service, never()).getArticleReadCount("stats:article:view:total:bad");
         verifyNoMoreInteractions(readCountMapper);
+    }
+
+    @Test
+    void getArticleReadCountShouldReadStringValue() {
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("stats:article:view:total:101")).thenReturn("18");
+
+        assertThat(service.getArticleReadCount("stats:article:view:total:101")).isEqualTo(18);
+    }
+
+    @Test
+    void syncTaskShouldRunEveryTenMinutes() throws NoSuchMethodException {
+        Method method = CountServiceImpl.class.getMethod("syncArticleReadCountToDb");
+        Scheduled scheduled = method.getAnnotation(Scheduled.class);
+
+        assertThat(scheduled).isNotNull();
+        assertThat(scheduled.cron()).isEqualTo("0 */10 * * * ?");
     }
 
     @Test
