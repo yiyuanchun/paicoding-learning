@@ -11,7 +11,8 @@ class StatisticsRedisKeyTest {
     @Test
     void shouldBuildArticleViewKeys() {
         assertEquals("stats:article:view:total:42", StatisticsRedisKey.articleTotalView(42L));
-        assertEquals("stats:{article-view}:delta:current", StatisticsRedisKey.ARTICLE_VIEW_DELTA_CURRENT);
+        assertEquals("stats:article:view:total:*", StatisticsRedisKey.articleTotalViewPattern());
+        assertEquals(42L, StatisticsRedisKey.articleIdFromTotalViewKey("stats:article:view:total:42"));
     }
 
     @Test
