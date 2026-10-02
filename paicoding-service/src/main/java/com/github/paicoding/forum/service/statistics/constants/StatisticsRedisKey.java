@@ -10,14 +10,25 @@ import java.time.format.DateTimeFormatter;
  */
 public final class StatisticsRedisKey {
 
-    public static final String ARTICLE_VIEW_DELTA_CURRENT =
-            "stats:{article-view}:delta:current";
+    public static final String ARTICLE_VIEW_TOTAL_PREFIX =
+            "stats:article:view:total:";
 
     private StatisticsRedisKey() {
     }
 
     public static String articleTotalView(long articleId) {
-        return "stats:article:view:total:" + articleId;
+        return ARTICLE_VIEW_TOTAL_PREFIX + articleId;
+    }
+
+    public static String articleTotalViewPattern() {
+        return ARTICLE_VIEW_TOTAL_PREFIX + "*";
+    }
+
+    public static long articleIdFromTotalViewKey(String key) {
+        if (key == null || !key.startsWith(ARTICLE_VIEW_TOTAL_PREFIX)) {
+            throw new IllegalArgumentException("invalid article view key: " + key);
+        }
+        return Long.parseLong(key.substring(ARTICLE_VIEW_TOTAL_PREFIX.length()));
     }
 
     public static String dailyPv(LocalDate date) {
