@@ -1,9 +1,8 @@
 package com.github.paicoding.forum.service.statistics.service.impl;
 
 import com.github.paicoding.forum.api.model.enums.DocumentTypeEnum;
-import com.github.paicoding.forum.core.cache.RedisClient;
+import com.github.paicoding.forum.service.statistics.constants.StatisticsRedisKey;
 import com.github.paicoding.forum.service.article.repository.mapper.ReadCountMapper;
-import com.github.paicoding.forum.service.statistics.constants.CountConstants;
 import com.github.paicoding.forum.service.user.repository.dao.UserFootDao;
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.ibatis.session.SqlSession;
@@ -28,8 +27,9 @@ class CountServiceImplLocalIntegrationTest {
     private static final String JDBC_URL = "jdbc:mysql://localhost:3306/pai_coding?useUnicode=true&allowPublicKeyRetrieval=true&autoReconnect=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai";
     private static final String DB_USERNAME = "root";
     private static final String DB_PASSWORD = "123456";
-    private static final long TEST_ARTICLE_ID = 987654321012345L;
-    private static final String TEST_KEY = CountConstants.ARTICLE_STATISTIC_INFO + TEST_ARTICLE_ID;
+    private static final long TEST_ARTICLE_ID = 987654321L;
+    private static final String TEST_KEY = StatisticsRedisKey.articleTotalView(TEST_ARTICLE_ID);
+    private static final String LEGACY_KEY = StatisticsRedisKey.legacyArticleTotalView(TEST_ARTICLE_ID);
 
     private HikariDataSource dataSource;
     private JdbcTemplate jdbcTemplate;
@@ -52,7 +52,6 @@ class CountServiceImplLocalIntegrationTest {
         stringRedisTemplate = new StringRedisTemplate();
         stringRedisTemplate.setConnectionFactory(redisConnectionFactory);
         stringRedisTemplate.afterPropertiesSet();
-        RedisClient.register(stringRedisTemplate);
 
         SqlSessionFactoryBean sqlSessionFactoryBean = new SqlSessionFactoryBean();
         sqlSessionFactoryBean.setDataSource(dataSource);
@@ -82,18 +81,39 @@ class CountServiceImplLocalIntegrationTest {
         CountServiceImpl service = spy(new CountServiceImpl(mock(UserFootDao.class)));
         ReflectionTestUtils.setField(service, "readCountMapper", sqlSession.getMapper(ReadCountMapper.class));
         ReflectionTestUtils.setField(service, "stringRedisTemplate", stringRedisTemplate);
-        doReturn(Collections.singleton(TEST_KEY)).when(service).scanKeys(CountConstants.ARTICLE_STATISTIC_INFO + "*");
+        doReturn(Collections.singleton(TEST_KEY)).when(service).scanKeys(StatisticsRedisKey.ARTICLE_VIEW_TOTAL_PREFIX + "*");
 
-        RedisClient.hSet(TEST_KEY, CountConstants.READ_COUNT, 12);
+        stringRedisTemplate.opsForValue().set(TEST_KEY, "12");
         service.syncArticleReadCountToDb();
-
         assertThat(queryReadCount()).isEqualTo(12);
 
-        RedisClient.hSet(TEST_KEY, CountConstants.READ_COUNT, 19);
+        stringRedisTemplate.opsForValue().set(TEST_KEY, "19");
         service.syncArticleReadCountToDb();
+        assertThat(queryReadCount()).isEqualTo(19);
 
+        // A delayed run must not roll the database count backward.
+        stringRedisTemplate.opsForValue().set(TEST_KEY, "17");
+        service.syncArticleReadCountToDb();
         assertThat(queryReadCount()).isEqualTo(19);
         assertThat(queryReadCountRowNum()).isEqualTo(1);
+    }
+
+    @Test
+    void shouldMigratePersistedCountAndLegacyStringOnce() {
+        jdbcTemplate.update(
+                "INSERT INTO read_count (document_id, document_type, cnt) VALUES (?, ?, ?)",
+                TEST_ARTICLE_ID, DocumentTypeEnum.ARTICLE.getCode(), 100);
+        stringRedisTemplate.opsForValue().set(LEGACY_KEY, "7");
+
+        CountServiceImpl service = new CountServiceImpl(mock(UserFootDao.class));
+        ReflectionTestUtils.setField(service, "readCountMapper", sqlSession.getMapper(ReadCountMapper.class));
+        ReflectionTestUtils.setField(service, "stringRedisTemplate", stringRedisTemplate);
+
+        service.incrArticleReadCount(1L, TEST_ARTICLE_ID);
+        assertThat(stringRedisTemplate.opsForValue().get(TEST_KEY)).isEqualTo("108");
+        assertThat(stringRedisTemplate.opsForValue().get(LEGACY_KEY)).isNull();
+        service.incrArticleReadCount(1L, TEST_ARTICLE_ID);
+        assertThat(stringRedisTemplate.opsForValue().get(TEST_KEY)).isEqualTo("109");
     }
 
     private Integer queryReadCount() {
@@ -114,7 +134,8 @@ class CountServiceImplLocalIntegrationTest {
 
     private void cleanup() {
         if (stringRedisTemplate != null) {
-            RedisClient.del(TEST_KEY);
+            stringRedisTemplate.delete(TEST_KEY);
+            stringRedisTemplate.delete(LEGACY_KEY);
         }
         if (jdbcTemplate != null) {
             jdbcTemplate.update(

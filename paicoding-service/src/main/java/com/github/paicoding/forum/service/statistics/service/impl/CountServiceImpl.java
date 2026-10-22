@@ -9,6 +9,7 @@ import com.github.paicoding.forum.service.article.repository.dao.ArticleDao;
 import com.github.paicoding.forum.service.article.repository.mapper.ReadCountMapper;
 import com.github.paicoding.forum.service.comment.service.CommentReadService;
 import com.github.paicoding.forum.service.statistics.constants.CountConstants;
+import com.github.paicoding.forum.service.statistics.constants.StatisticsRedisKey;
 import com.github.paicoding.forum.service.statistics.service.CountService;
 import com.github.paicoding.forum.service.user.repository.dao.UserDao;
 import com.github.paicoding.forum.service.user.repository.dao.UserFootDao;
@@ -106,20 +107,39 @@ public class CountServiceImpl implements CountService {
         info.setPraiseCount(ans.getOrDefault(CountConstants.PRAISE_COUNT, 0));
         info.setCollectionCount(ans.getOrDefault(CountConstants.COLLECTION_COUNT, 0));
         info.setCommentCount(ans.getOrDefault(CountConstants.COMMENT_COUNT, 0));
-        info.setReadCount(ans.getOrDefault(CountConstants.READ_COUNT, 0));
+        // 阅读总数仅从 String 读取，旧 Hash 只保存点赞/收藏/评论统计。
+        info.setReadCount(Math.toIntExact(getOrInitializeArticleTotal(articleId)));
         return info;
     }
 
     @Override
     public void incrArticleReadCount(Long authorUserId, Long articleId) {
-        // 优化：只更新 Redis 计数器，不再直接写数据库
-        // 定时任务 syncArticleReadCountToDb 会将 Redis 计数同步到数据库
-        RedisClient.pipelineAction()
-                .add(CountConstants.ARTICLE_STATISTIC_INFO + articleId, CountConstants.READ_COUNT,
-                        (connection, key, value) -> connection.hIncrBy(key, value, 1))
-                .add(CountConstants.USER_STATISTIC_INFO + authorUserId, CountConstants.READ_COUNT,
-                        (connection, key, value) -> connection.hIncrBy(key, value, 1))
-                .execute();
+        getOrInitializeArticleTotal(articleId);
+        stringRedisTemplate.opsForValue().increment(StatisticsRedisKey.articleTotalView(articleId));
+    }
+
+    /**
+     * First use migrates MySQL history + the previous increment-only String.
+     * SETNX prevents concurrent initializations from overwriting a newer INCR.
+     * No Hash-based article view deltas are read or written.
+     */
+    private long getOrInitializeArticleTotal(Long articleId) {
+        String key = StatisticsRedisKey.articleTotalView(articleId);
+        String total = stringRedisTemplate.opsForValue().get(key);
+        if (total == null) {
+            Integer persisted = readCountMapper.findArticleReadCount(articleId, DocumentTypeEnum.ARTICLE.getCode());
+            String legacyKey = StatisticsRedisKey.legacyArticleTotalView(articleId);
+            String legacy = stringRedisTemplate.opsForValue().get(legacyKey);
+            long initial = (persisted == null ? 0L : persisted.longValue())
+                    + (legacy == null ? 0L : Long.parseLong(legacy));
+            Boolean created = stringRedisTemplate.opsForValue().setIfAbsent(key, Long.toString(initial));
+            if (Boolean.TRUE.equals(created)) {
+                // Avoid adding the already-migrated legacy increment after a Redis key rebuild.
+                stringRedisTemplate.delete(legacyKey);
+            }
+            total = stringRedisTemplate.opsForValue().get(key);
+        }
+        return Long.parseLong(total);
     }
 
     /**
@@ -145,27 +165,20 @@ public class CountServiceImpl implements CountService {
     }
 
     /**
-     * 每5分钟执行一次，将 Redis 中的文章阅读计数同步到数据库
+     * 每10分钟将文章浏览总数（Redis String）持久化到 MySQL。
      */
-    @Scheduled(cron = "0 */5 * * * ?")
+    @Scheduled(cron = "0 */10 * * * ?")
     public void syncArticleReadCountToDb() {
         Long start = System.currentTimeMillis();
         log.info("开始同步文章阅读计数到数据库");
-
         try {
-            // 扫描所有文章统计 key
-            Set<String> keys = scanKeys(CountConstants.ARTICLE_STATISTIC_INFO + "*");
-
+            Set<String> keys = scanKeys(StatisticsRedisKey.ARTICLE_VIEW_TOTAL_PREFIX + "*");
             int synced = 0;
             for (String key : keys) {
                 try {
-                    // 提取 articleId
-                    Long articleId = Long.parseLong(key.replace(CountConstants.ARTICLE_STATISTIC_INFO, ""));
-
-                    // 获取 Redis 中的阅读计数
+                    Long articleId = Long.parseLong(key.substring(StatisticsRedisKey.ARTICLE_VIEW_TOTAL_PREFIX.length()));
                     Integer readCount = getArticleReadCount(key);
-                    if (readCount != null && readCount > 0) {
-                        // 更新数据库
+                    if (readCount != null) {
                         saveArticleReadCount(articleId, readCount);
                         synced++;
                     }
@@ -173,45 +186,32 @@ public class CountServiceImpl implements CountService {
                     log.error("同步阅读计数失败, key: {}", key, e);
                 }
             }
-
             log.info("同步文章阅读计数完成，共同步 {} 篇文章，耗时: {}ms", synced, System.currentTimeMillis() - start);
         } catch (Exception e) {
             log.error("同步文章阅读计数异常", e);
         }
     }
 
-    /**
-     * 扫描匹配的 Redis key
-     */
-    @SuppressWarnings("unchecked")
+    /** New String keys have no pai_ prefix (unlike the old RedisClient hash keys). */
     Set<String> scanKeys(String pattern) {
         Set<String> keys = new HashSet<>();
-        ScanOptions options = ScanOptions.scanOptions().match("pai_" + pattern).count(100).build();
-
+        ScanOptions options = ScanOptions.scanOptions().match(pattern).count(100).build();
         try (Cursor<String> cursor = stringRedisTemplate.scan(options)) {
             while (cursor.hasNext()) {
-                String key = cursor.next();
-                // 移除前缀 "pai_"
-                keys.add(key.substring(4));
+                keys.add(cursor.next());
             }
         }
         return keys;
     }
 
-    /**
-     * 获取 Redis 中文章当前的阅读总数
-     */
     Integer getArticleReadCount(String key) {
-        return RedisClient.hGet(key, CountConstants.READ_COUNT, Integer.class);
+        String value = stringRedisTemplate.opsForValue().get(key);
+        return value == null ? null : Math.toIntExact(Long.parseLong(value));
     }
 
-    /**
-     * 将 Redis 中的阅读总数覆盖写入数据库，保证定时同步幂等
-     */
     void saveArticleReadCount(Long articleId, Integer readCount) {
         readCountMapper.insertOrUpdate(articleId, DocumentTypeEnum.ARTICLE.getCode(), readCount);
     }
-
 
     /**
      * 更新用户的统计信息
@@ -256,7 +256,6 @@ public class CountServiceImpl implements CountService {
         RedisClient.hMSet(CountConstants.ARTICLE_STATISTIC_INFO + articleId,
                 MapUtils.create(CountConstants.COLLECTION_COUNT, res.getCollectionCount(),
                         CountConstants.PRAISE_COUNT, res.getPraiseCount(),
-                        CountConstants.READ_COUNT, res.getReadCount(),
                         CountConstants.COMMENT_COUNT, res.getCommentCount()
                 )
         );
